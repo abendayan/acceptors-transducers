@@ -4,6 +4,7 @@ import time
 import sys
 import matplotlib.pyplot as plt
 import random
+import model_tagger as mt
 
 # https://github.com/neulab/dynet-benchmark/blob/master/dynet-py/bilstm-tagger.py
 EMBEDDINGS_SIZE = 50
@@ -46,25 +47,39 @@ def parse_file(name_file):
 
 class TaggerBiLSTM:
     def __init__(self, name_file, dev_file, type="a"):
+        self.type = type
         self.sequences, self.vocab, self.tags, self.chars = parse_file(name_file)
         if self.type == "c":
-            self.vocab = open("vocab.txt", r).read().split("\n")
+            vocab_txt = np.array(open("vocab.txt", 'r').read().split('\n'))
+            for vocab in vocab_txt:
+                if vocab not in self.vocab:
+                    self.vocab[vocab] = len(self.vocab)
+            # vecs = np.loadtxt("wordVectors.txt")
         print "number of sentences " + str(len(self.sequences))
         self.sequences_dev = parse_file(dev_file)[0]
         print "defined all of the data in " + str(passed_time(start_time))
         self.vocab_size = len(self.vocab)
-        self.type = type
-        # TODO all of the stuff here are for a, needs to adapt for the other options
         self.model = dn.Model()
-        self.input_lookup = self.model.add_lookup_parameters((self.vocab_size, EMBEDDINGS_SIZE))
-        if self.type == "b":
-            self.lstm_c = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
+        # self.input_lookup = self.model.add_lookup_parameters((self.vocab_size, EMBEDDINGS_SIZE))
+        # if self.type == "c":
+        #     self.input_lookup.init_from_array(vecs)
+        # if self.type == "b":
+        #     self.lstm_c = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
         self.lstm_f_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
         self.lstm_f_2 = dn.LSTMBuilder(1, 100, HIDDEN_DIM, self.model)
         self.lstm_b_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
         self.lstm_b_2 = dn.LSTMBuilder(1, 100, HIDDEN_DIM, self.model)
         self.output_w = self.model.add_parameters((self.vocab_size, LSTM_NUM_OF_LAYERS*EMBEDDINGS_SIZE))
         self.output_b = self.model.add_parameters((self.vocab_size))
+
+        if self.type == "a":
+            self.tagger = mt.WordEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size)
+        elif self.type == "b":
+            self.tagger = mt.CharEmbedding(self.model, EMBEDDINGS_SIZE, len(self.chars), HIDDEN_DIM)
+        elif self.type == "c":
+            self.tagger = mt.PreTrained(self.model, EMBEDDINGS_SIZE, self.vocab_size, "wordVectors.txt")
+        elif self.type == "d":
+            self.tagger = mt.WordCharEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size, len(self.chars), HIDDEN_DIM)
         self.trainer = dn.AdamTrainer(self.model)
         random.shuffle(self.sequences)
 
@@ -74,9 +89,10 @@ class TaggerBiLSTM:
         return word
 
     def prepare_sequence(self, sequence):
-        if self.type == "a":
+        if self.type == "a" or self.type == "c":
+            # print sequence
             x = [ self.vocab[self.word_or_unk(word)] for (word, tag) in sequence ]
-        elif self.type == "b":
+        elif self.type == "b" or self.type == "d":
             x = []
             for (word, _) in sequence:
                 word = self.word_or_unk(word)
@@ -106,22 +122,7 @@ class TaggerBiLSTM:
 
     def first_layer(self, X):
         dn.renew_cg()
-        if self.type == "a":
-            embedded = [dn.lookup(self.input_lookup, chars) for chars in X]
-        elif self.type == "b":
-            input_chars = [ [dn.lookup(self.input_lookup, char) for char in chars] for chars in X ]
-            embedded = None
-            state_char = self.lstm_c.initial_state()
-            embedded = []
-            for input_char in input_chars:
-                embedded.append(input_char[len(input_char) - 1])
-                # temp_embedd = state_char.transduce(input_char)
-                # char_embedd = temp_embedd[0]
-                #
-                # for i in range(1, len(temp_embedd)):
-                #     char_embedd = dn.concatenate([char_embedd, temp_embedd[i]])
-                # embedded.append(char_embedd)
-
+        embedded = self.tagger(X)
         state_back_1 = self.lstm_b_1.initial_state()
         state_forw_1 = self.lstm_f_1.initial_state()
         fw_exps = state_forw_1.transduce(embedded)
@@ -144,6 +145,7 @@ class TaggerBiLSTM:
 
         linear = w*b_2[i] + b
         # will go through softmax in the loss function
+        # return self.tagger(b_2, i)
         return linear
 
     def train(self):
@@ -180,6 +182,7 @@ class TaggerBiLSTM:
         for i in range(EPOCHS):
             loss = self.train()
             print "epoch number " + str(i) + " loss: " + str(loss)
+        dn.save("model_type"+self.type,[self.tagger])
 
 if __name__ == '__main__':
     type_word = sys.argv[1]
