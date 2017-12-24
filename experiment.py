@@ -8,7 +8,7 @@ EMBEDDINGS_SIZE = 10
 LSTM_NUM_OF_LAYERS = 1
 STATE_SIZE = 10
 NUM_OF_CLASSES = 2
-EPOCHS = 200
+EPOCHS = 500
 BATCH_SIZE = 50
 HIDDEN_LAYER = 1
 NUM_OUT = 100
@@ -147,7 +147,6 @@ class Tagger:
 
         # embedded = embedded.expr()
         output_vec = state.transduce(embedded)[-1]
-
         w_1 = dn.parameter(output_w_1)
         w_2 = dn.parameter(output_w_2)
         b_1 = dn.parameter(output_b_1)
