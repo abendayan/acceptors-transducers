@@ -81,18 +81,31 @@ class TaggerBiLSTM:
         elif self.type == "d":
             self.tagger = mt.WordCharEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size, len(self.chars), HIDDEN_DIM)
         self.trainer = dn.AdamTrainer(self.model)
-        random.shuffle(self.sequences)
+        self.define_data()
+        self.define_dev_data()
 
     def word_or_unk(self, word):
         if word not in self.vocab:
             return UNK
         return word
 
-    def prepare_sequence(self, sequence):
+    def define_data(self):
+        self.x = [self.prepare_x(sentence) for sentence in self.sequences]
+        self.y = [self.prepare_y(sentence) for sentence in self.sequences]
+        print len(self.x)
+
+    def define_dev_data(self):
+        self.x_dev = [self.prepare_x(sentence) for sentence in self.sequences_dev]
+        self.y_dev = [self.prepare_y(sentence) for sentence in self.sequences_dev]
+        print len(self.x_dev)
+
+
+    def prepare_x(self, sequence):
         if self.type == "a" or self.type == "c":
             # print sequence
             x = [ self.vocab[self.word_or_unk(word)] for (word, tag) in sequence ]
         elif self.type == "b" or self.type == "d":
+            # when d, needs to have the words and the char
             x = []
             for (word, _) in sequence:
                 word = self.word_or_unk(word)
@@ -100,20 +113,28 @@ class TaggerBiLSTM:
                     x.append([self.chars[char] for char in word ])
                 else:
                     x.append([self.chars[word]])
-        y = [ self.tags[tag] for (word, tag) in sequence ]
+        return x
+
+    def prepare_y(self, sequence):
+        return [ self.tags[tag] for (word, tag) in sequence ]
+
+    def prepare_sequence(self, sequence):
+        x = self.prepare_x(sequence)
+        y = self.prepare_y(sequence)
         return x, y
 
     def validate(self):
         good = 0.0
         bad = 0.0
-        for i, sequence in enumerate(self.sequences_dev):
-            X, Y = self.prepare_sequence(sequence)
-            b_1 = self.first_layer(X)
-            b_2 = self.second_layer(b_1)
-            for j in range(len(X)):
-                probs = self.get_probs(b_2, j).npvalue()
-                pred = np.argmax(probs)
-                label = Y[j]
+        for X, Y in zip(self.x_dev, self.y_dev):
+            # b_1 = self.first_layer(X)
+            # b_2 = self.second_layer(b_1)
+            probs = self.get_probs(X)
+            for i in range(len(probs)):
+                pred = np.argmax(probs[:, i])
+                # probs = self.get_probs(b_2, j).npvalue()
+                # pred = np.argmax(probs)
+                label = Y[i]
                 if pred == label:
                     good += 1
                 else:
@@ -135,18 +156,27 @@ class TaggerBiLSTM:
         state_forw_2 = self.lstm_f_2.initial_state()
         fw_exps = state_forw_2.transduce(b_1)
         bw_exps = state_back_2.transduce(reversed(b_1))
-        b_2 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, reversed(bw_exps))]
-        return b_2
+        bw_exps.reverse()
+        # b_2 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, reversed(bw_exps))]
+        return fw_exps, bw_exps
 
-    def get_probs(self, b_2, i):
-        # print output_vec
+    def get_probs(self, X):
+        b_1 = self.first_layer(X)
+        out_f, out_b = self.second_layer(b_1)
+        size_vector = len(b_1)
+        probs = []
         w = dn.parameter(self.output_w)
         b = dn.parameter(self.output_b)
+        for i in range(size_vector):
+            bi_output = dn.concatenate([out_f[i], out_b[i]])
+            probs.append(dn.softmax(w*bi_output+b))
+        # print output_vec
 
-        linear = w*b_2[i] + b
+        # print b_2[-1]
+        # linear = [(w*b_2[i] + b) for i in range(len(b_2))]
         # will go through softmax in the loss function
         # return self.tagger(b_2, i)
-        return linear
+        return probs
 
     def train(self):
         start_time = time.time()
@@ -154,29 +184,44 @@ class TaggerBiLSTM:
         checked = 0
         total_checked = 0
         total_loss = 0.0
-        for i, sequence in enumerate(self.sequences):
-            X, Y = self.prepare_sequence(sequence)
-            b_1 = self.first_layer(X)
-            b_2 = self.second_layer(b_1)
-            for j in range(1, len(X)-1):
-                checked += 1
-                probs = self.get_probs(b_2, j)
-                loss = dn.pickneglogsoftmax(probs, Y[j])
-                loss_value = loss.value()
-                sum_of_losses += loss_value
-                loss.backward()
-                self.trainer.update()
-            print "loss: " + str(sum_of_losses / checked) + " for sequence number " + str(i)
-            total_checked += checked
-            checked = 0
-            total_loss += sum_of_losses
-            sum_of_losses = 0.0
-            if (i+1)%500 == 0:
+        # i = 0?
+        for  i, (X, Y) in enumerate(zip(self.x, self.y)):
+            # # X, Y = self.prepare_sequence(sequence)
+            # b_1 = self.first_layer(X)
+            # b_2 = self.second_layer(b_1)
+            probs = self.get_probs(X)
+            # print Y
+            losses = []
+            for j, prob in enumerate(probs):
+                # print prob
+                # print Y[j]
+                losses.append(-dn.log(dn.pick(prob, Y[j])))
+            loss = dn.esum(losses)
+            loss_value = loss.value()
+            sum_of_losses += loss_value
+            loss.backward()
+            self.trainer.update()
+            checked += len(X)
+            # for j in range(1, len(X)-1):
+            #     checked += 1
+            #     probs = self.get_probs(b_2, j)
+            #     loss = dn.pickneglogsoftmax(probs, Y[j])
+            #     loss_value = loss.value()
+            #     sum_of_losses += loss_value
+            #     loss.backward()
+            #     self.trainer.update()
+            # print "loss: " + str(sum_of_losses / checked) + " for sequence number " + str(i)
+            # total_checked += checked
+            # checked = 0
+            # total_loss += sum_of_losses
+            # sum_of_losses = 0.0
+            # i += 1
+            if (i+1)%(500) == 0:
                 print "evaluate 500 sequence in " + str(passed_time(start_time))
                 start_time = time.time()
                 accuracy_dev = self.validate()
                 print "accuracy on dev: " + str(accuracy_dev)
-        return total_loss / total_checked
+        return sum_of_losses / checked
 
     def learn(self):
         for i in range(EPOCHS):
