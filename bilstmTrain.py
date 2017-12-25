@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import random
 import model_tagger as mt
 
-# https://github.com/neulab/dynet-benchmark/blob/master/dynet-py/bilstm-tagger.py
 EMBEDDINGS_SIZE = 50
 LSTM_NUM_OF_LAYERS = 2
 INPUT_DIM = 50
@@ -49,22 +48,18 @@ class TaggerBiLSTM:
     def __init__(self, name_file, dev_file, type="a"):
         self.type = type
         self.sequences, self.vocab, self.tags, self.chars = parse_file(name_file)
+        self.tags_to_ix = { id:tag for tag, id in self.tags.iteritems() }
+        print self.tags_to_ix
         if self.type == "c":
             vocab_txt = np.array(open("vocab.txt", 'r').read().split('\n'))
             for vocab in vocab_txt:
                 if vocab not in self.vocab:
                     self.vocab[vocab] = len(self.vocab)
-            # vecs = np.loadtxt("wordVectors.txt")
         print "number of sentences " + str(len(self.sequences))
         self.sequences_dev = parse_file(dev_file)[0]
         print "defined all of the data in " + str(passed_time(start_time))
         self.vocab_size = len(self.vocab)
         self.model = dn.Model()
-        # self.input_lookup = self.model.add_lookup_parameters((self.vocab_size, EMBEDDINGS_SIZE))
-        # if self.type == "c":
-        #     self.input_lookup.init_from_array(vecs)
-        # if self.type == "b":
-        #     self.lstm_c = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
         self.lstm_f_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
         self.lstm_f_2 = dn.LSTMBuilder(1, 100, HIDDEN_DIM, self.model)
         self.lstm_b_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
@@ -127,42 +122,33 @@ class TaggerBiLSTM:
         good = 0.0
         bad = 0.0
         for X, Y in zip(self.x_dev, self.y_dev):
-            # b_1 = self.first_layer(X)
-            # b_2 = self.second_layer(b_1)
             probs = self.get_probs(X)
-            for i in range(len(probs)):
-                pred = np.argmax(probs[:, i])
-                # probs = self.get_probs(b_2, j).npvalue()
-                # pred = np.argmax(probs)
-                label = Y[i]
-                if pred == label:
-                    good += 1
-                else:
-                    bad += 1
+            probs_values = [prob.npvalue() for prob in probs]
+            for i, prob in enumerate(probs_values):
+                print self.tags_to_ix[Y[i]]
+                tag = self.tags_to_ix[np.argmax(prob)]
+                if tag != 'O': # for NER
+                    label = self.tags_to_ix[Y[i]]
+                    if pred == label:
+                        good += 1
+                    else:
+                        bad += 1
         return good / (good + bad)
 
-    def first_layer(self, X):
+    def get_probs(self, X):
         dn.renew_cg()
-        embedded = self.tagger(X)
+        embedded = self.tagger([X])
         state_back_1 = self.lstm_b_1.initial_state()
         state_forw_1 = self.lstm_f_1.initial_state()
         fw_exps = state_forw_1.transduce(embedded)
         bw_exps = state_back_1.transduce(reversed(embedded))
-        b_1 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, reversed(bw_exps))]
-        return b_1
-
-    def second_layer(self, b_1):
+        bw_exps.reverse()
+        b_1 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, bw_exps)]
         state_back_2 = self.lstm_b_2.initial_state()
         state_forw_2 = self.lstm_f_2.initial_state()
-        fw_exps = state_forw_2.transduce(b_1)
-        bw_exps = state_back_2.transduce(reversed(b_1))
-        bw_exps.reverse()
-        # b_2 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, reversed(bw_exps))]
-        return fw_exps, bw_exps
-
-    def get_probs(self, X):
-        b_1 = self.first_layer(X)
-        out_f, out_b = self.second_layer(b_1)
+        out_f = state_forw_2.transduce(b_1)
+        out_b = state_back_2.transduce(reversed(b_1))
+        out_b.reverse()
         size_vector = len(b_1)
         probs = []
         w = dn.parameter(self.output_w)
@@ -170,12 +156,6 @@ class TaggerBiLSTM:
         for i in range(size_vector):
             bi_output = dn.concatenate([out_f[i], out_b[i]])
             probs.append(dn.softmax(w*bi_output+b))
-        # print output_vec
-
-        # print b_2[-1]
-        # linear = [(w*b_2[i] + b) for i in range(len(b_2))]
-        # will go through softmax in the loss function
-        # return self.tagger(b_2, i)
         return probs
 
     def train(self):
@@ -186,42 +166,27 @@ class TaggerBiLSTM:
         total_loss = 0.0
         # i = 0?
         for  i, (X, Y) in enumerate(zip(self.x, self.y)):
-            # # X, Y = self.prepare_sequence(sequence)
-            # b_1 = self.first_layer(X)
-            # b_2 = self.second_layer(b_1)
             probs = self.get_probs(X)
-            # print Y
             losses = []
             for j, prob in enumerate(probs):
-                # print prob
-                # print Y[j]
-                losses.append(-dn.log(dn.pick(prob, Y[j])))
+                losses.append(dn.sum_batches(-dn.log(dn.pick_batch(prob, Y))))
+            # loss = -dn.log(dn.pick_batch(probs, Y))
+            # loss = dn.sum_batches(losses)
             loss = dn.esum(losses)
-            loss_value = loss.value()
+            loss_value = loss.scalar_value()
+            # print loss_value
             sum_of_losses += loss_value
+            loss.forward()
             loss.backward()
             self.trainer.update()
             checked += len(X)
-            # for j in range(1, len(X)-1):
-            #     checked += 1
-            #     probs = self.get_probs(b_2, j)
-            #     loss = dn.pickneglogsoftmax(probs, Y[j])
-            #     loss_value = loss.value()
-            #     sum_of_losses += loss_value
-            #     loss.backward()
-            #     self.trainer.update()
-            # print "loss: " + str(sum_of_losses / checked) + " for sequence number " + str(i)
-            # total_checked += checked
-            # checked = 0
-            # total_loss += sum_of_losses
-            # sum_of_losses = 0.0
-            # i += 1
+            # print "sequence " + str(i) + " with loss " + str(loss_value/len(X))
             if (i+1)%(500) == 0:
                 print "evaluate 500 sequence in " + str(passed_time(start_time))
                 start_time = time.time()
                 accuracy_dev = self.validate()
                 print "accuracy on dev: " + str(accuracy_dev)
-        return sum_of_losses / checked
+        return sum_of_losses
 
     def learn(self):
         for i in range(EPOCHS):

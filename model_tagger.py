@@ -13,7 +13,7 @@ class WordEmbedding(object):
         self.spec = (embedding_size, vocab_size)
 
     def __call__(self, input_exp):
-        embedded = [dn.lookup(self.input_lookup, chars) for chars in input_exp]
+        embedded = [dn.lookup_batch(self.input_lookup, chars) for chars in input_exp]
         return embedded
 
     def param_collection(self): return self.pc
