@@ -33,7 +33,7 @@ class CharEmbedding(object):
         self.spec = (embedding_size, char_size, hidden_dim)
 
     def __call__(self, X):
-        input_chars = [ [dn.lookup(self.input_lookup, char) for char in chars] for chars in X ]
+        input_chars = [ [dn.lookup_batch(self.input_lookup, char) for char in chars] for chars in X ]
         embedded = None
         state_char = self.lstm_c.initial_state()
         embedded = []
@@ -58,7 +58,7 @@ class PreTrained(object):
         self.spec = (embedding_size, vocab_size, word_vector_file)
 
     def __call__(self, input_exp):
-        embedded = [dn.lookup(self.input_lookup, chars) for chars in input_exp]
+        embedded = [dn.lookup_batch(self.input_lookup, chars) for chars in input_exp]
         return embedded
 
     def param_collection(self): return self.pc
