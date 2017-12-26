@@ -13,6 +13,7 @@ EPOCHS = 5
 UNK = "UUUNKKK"
 START = "<s>"
 END = "</s>"
+EMBEDDINGS_SIZE = 50
 start_time = time.time()
 
 def passed_time(previous_time):
@@ -79,10 +80,10 @@ class TaggerBiLSTM:
         self.lstm_b_1 = dn.LSTMBuilder(LSTM_NUM_OF_LAYERS, INPUT_DIM, HIDDEN_DIM, self.model)
         self.lstm_b_2 = dn.LSTMBuilder(LSTM_NUM_OF_LAYERS, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
         self.output_w = self.model.add_parameters((INPUT_DIM, 2*HIDDEN_DIM))
-        self.output_b = self.model.add_parameters((self.out_size, INPUT_DIM))
+        self.output_b = self.model.add_parameters((INPUT_DIM))
 
         if self.type == "a":
-            self.tagger = mt.WordEmbedding(self.model, 50, self.vocab_size)
+            self.tagger = mt.WordEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size)
         elif self.type == "b":
             self.tagger = mt.CharEmbedding(self.model, EMBEDDINGS_SIZE, len(self.chars), HIDDEN_DIM)
         elif self.type == "c":
@@ -133,23 +134,16 @@ class TaggerBiLSTM:
         bad = 0.0
         for X, Y in zip(self.x_dev, self.y_dev):
             probs = self.get_probs(X)
-            for prob in probs:
-                prob_value = prob.npvalue()
+            probs_values = [prob.npvalue() for prob in probs]
+            for i, prob_value in enumerate(probs_values):
                 size_pred = len(prob_value[0])
                 preds = [ np.argmax(prob_value[:, j]) for j in range(size_pred) ]
                 temp_good = len([1 for j in range(size_pred) if preds[j] == Y[j]])
+                # TODO remove the O for NER
                 tags = [self.tags_to_ix[preds[j]] for j in range(size_pred)]
                 good += temp_good
                 bad += (size_pred - temp_good)
-                # for j in range(len(prob_value[0])):
-                #     pred = np.argmax(prob_value[:, j])
-                #     tag = self.tags_to_ix[pred]
-                #     label = self.tags_to_ix[Y[j]]
-                #     if tag != 'O' and label != 'O': # for NER
-                #         if pred == Y[j]:
-                #             good += 1
-                #         else:
-                #             bad += 1
+
         return good / (good + bad)
 
     def get_probs(self, X):
@@ -159,18 +153,18 @@ class TaggerBiLSTM:
         state_forw_1 = self.lstm_f_1.initial_state()
         fw_exps = state_forw_1.transduce(embedded)
         bw_exps = state_back_1.transduce(reversed(embedded))
-        bw_exps.reverse()
+        # bw_exps.reverse()
         b_1 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, bw_exps)]
         state_back_2 = self.lstm_b_2.initial_state()
         state_forw_2 = self.lstm_f_2.initial_state()
         out_f = state_forw_2.transduce(b_1)
         out_b = state_back_2.transduce(reversed(b_1))
-        out_b.reverse()
+        # out_b.reverse()
         size_vector = len(embedded)
         w = dn.parameter(self.output_w)
         b = dn.parameter(self.output_b)
-        out = [ dn.concatenate([out_f[i], out_b[i]]) for i in range(size_vector) ]
-        probs = [ b*dn.softmax(w*o) for o in out ]
+        b_2 = [ dn.concatenate([out_f[i], out_b[i]]) for i in range(size_vector) ]
+        probs = [ w*b_2_i+b for b_2_i in b_2 ]
         return probs
 
     def train(self):
@@ -181,6 +175,11 @@ class TaggerBiLSTM:
         total_checked = 0.0
         accuracy_all = []
         j = 1
+        to_print_loss = []
+        to_print_time = []
+        to_print_time_valid = []
+        print "========================================================="
+        print "N*batch|| Loss      || Time train || Time dev || accuracy"
         for  i, (X, Y) in enumerate(zip(self.x, self.y)):
             probs = self.get_probs(X)
             losses = [ dn.sum_batches(dn.pickneglogsoftmax_batch(prob, Y)) for prob in probs ]
@@ -194,23 +193,29 @@ class TaggerBiLSTM:
             total_checked += len(Y)
             self.trainer.update()
             if (i+1)%(500) == 0:
-                print "batch of sequences number " + str(j) + " with loss " + str(sum_of_losses/checked)
+                to_print_loss.append(sum_of_losses/checked)
+                to_print_time.append(passed_time(start_time))
+                # print "batch of sequences number " + str(j) + " with loss " + str(sum_of_losses/checked)
                 checked = 0.0
                 sum_of_losses = 0.0
                 j += 1
-                print "evaluate 500 sequence in " + str(passed_time(start_time))
+                # print "evaluate 500 sequence in " + str(passed_time(start_time))
                 start_time = time.time()
                 accuracy_dev = self.validate()
                 accuracy_all.append(accuracy_dev)
-                print "accuracy on dev: " + str(accuracy_dev) + " in time " + str(passed_time(start_time))
+                to_print_time_valid.append(passed_time(start_time))
+                # print "accuracy on dev: " + str(accuracy_dev) + " in time " + str(passed_time(start_time))
                 start_time = time.time()
-        print "epoch loss: " + str(total_losses/total_checked)
+                m = len(to_print_loss)-1
+                print str(m) + "\t|| " + str(to_print_loss[m]) + " || " + str(to_print_time[m]) + " || " + str(to_print_time_valid[m]) + " || " + str(accuracy_all[m])
+        print "epoch loss: " + str(total_losses/total_checked) + " last accuracy " + str(accuracy_all[len(accuracy_all)-1])
         return accuracy_all
 
     def learn(self):
         start_epoch = time.time()
         accuracy_epoch = [0]*EPOCHS
         for i in range(EPOCHS):
+            print "===================== EPOCH " + str(i+1) + " ====================="
             accuracy_epoch[i] = self.train()
             print "epoch number " + str(i+1) + " done in " + str(passed_time(start_epoch))
             start_epoch = time.time()
