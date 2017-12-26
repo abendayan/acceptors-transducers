@@ -99,3 +99,19 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+pos
+pos/*
+ner
+ner/*
+*.png
+*.data
+*.meta
+test
+test_pol
+train
+train_pol
+vocab.txt
+wordVectors.txt
+neg_examples
+pos_examples
