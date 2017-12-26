@@ -8,7 +8,7 @@ import model_tagger as mt
 
 LSTM_NUM_OF_LAYERS = 2
 INPUT_DIM = 50
-HIDDEN_DIM = 25
+HIDDEN_DIM = 30
 EPOCHS = 5
 UNK = "UUUNKKK"
 START = "<s>"
@@ -18,16 +18,6 @@ start_time = time.time()
 
 def passed_time(previous_time):
     return round(time.time() - previous_time, 3)
-
-def save_iter_in_graph(folder, data):
-    plt.figure(0)
-    plt.xlabel('Number sentence seen')
-    plt.ylabel('Accuracy')
-    plt.plot([a for a in data[0]], label="type a")
-    plt.plot([a for a in data[1]], label="type b")
-    plt.plot([a for a in data[2]], label="type c")
-    plt.plot([a for a in data[3]], label="type d")
-    plt.savefig(folder + '/accuracy-dev.png')
 
 def parse_file(name_file):
     words = open(name_file, "r").read().split("\n")
@@ -55,10 +45,8 @@ def parse_file(name_file):
     return sequences, vocab, tags, chars
 
 class TaggerBiLSTM:
-    def __init__(self, folder, type="a"):
-        self.folder = folder
-        name_file = folder + "/train"
-        dev_file = folder + "/dev"
+    def __init__(self, name_file, type="a"):
+        # dev_file = folder + "/dev"
         self.type = type
         self.sequences, self.vocab, self.tags, self.chars = parse_file(name_file)
         self.tags_to_ix = { id:tag for tag, id in self.tags.iteritems() }
@@ -69,23 +57,25 @@ class TaggerBiLSTM:
                 if vocab not in self.vocab:
                     self.vocab[vocab] = len(self.vocab)
         print "number of sentences " + str(len(self.sequences))
-        sequence_dev = parse_file(dev_file)[0]
+        # sequence_dev = parse_file(dev_file)[0]
         # random.shuffle(sequence_dev)
-        self.sequences_dev = sequence_dev[:500]
+        dev_size = len(self.sequences)/10
+        print dev_size
+        self.sequences_dev = self.sequences[:dev_size]
         print "defined all of the data in " + str(passed_time(start_time))
         self.vocab_size = len(self.vocab)
         self.model = dn.Model()
-        self.lstm_f_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
+        self.lstm_f_1 = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
         self.lstm_f_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
-        self.lstm_b_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
+        self.lstm_b_1 = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
         self.lstm_b_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
         self.output_w = self.model.add_parameters((self.out_size, 2*HIDDEN_DIM))
-        self.output_b = self.model.add_parameters((self.out_size))
+        # self.output_b = self.model.add_parameters((self.out_size))
 
         if self.type == "a":
             self.tagger = mt.WordEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size)
         elif self.type == "b":
-            self.tagger = mt.CharEmbedding(self.model, EMBEDDINGS_SIZE, len(self.chars), HIDDEN_DIM)
+            self.tagger = mt.CharEmbedding(self.model, EMBEDDINGS_SIZE, len(self.chars))
         elif self.type == "c":
             self.tagger = mt.PreTrained(self.model, EMBEDDINGS_SIZE, self.vocab_size, "wordVectors.txt")
         elif self.type == "d":
@@ -133,7 +123,7 @@ class TaggerBiLSTM:
         good = 0.0
         bad = 0.0
         for X, Y in zip(self.x_dev, self.y_dev):
-            probs = self.get_probs(X)[0].npvalue()
+            probs = dn.softmax(self.get_probs(X)[0]).npvalue()
             for i in range(len(probs[0])):
                 pred = np.argmax(probs[:, i])
                 label = Y[i]
@@ -170,9 +160,10 @@ class TaggerBiLSTM:
         out_b.reverse()
         size_vector = len(embedded)
         w = dn.parameter(self.output_w)
-        b = dn.parameter(self.output_b)
+        # b = dn.parameter(self.output_b)
         b_2 = [ dn.concatenate([out_f[i], out_b[i]]) for i in range(size_vector) ]
-        probs = [ w*b_2_i+b for b_2_i in b_2 ]
+        probs = [ w*b_2_i for b_2_i in b_2 ]
+        # probs = [ w*b_2_i+b for b_2_i in b_2 ]
         return probs
 
     def train(self):
@@ -240,4 +231,3 @@ if __name__ == '__main__':
     tagger_train = TaggerBiLSTM(folder_name, type_word)
     accuracy_type = tagger_train.train()
     accuracy_all = [accuracy_type, [0], [0], [0]]
-    save_iter_in_graph(folder_name, accuracy_all)
