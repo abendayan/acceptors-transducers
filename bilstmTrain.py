@@ -71,16 +71,16 @@ class TaggerBiLSTM:
         print "number of sentences " + str(len(self.sequences))
         sequence_dev = parse_file(dev_file)[0]
         # random.shuffle(sequence_dev)
-        self.sequences_dev = sequence_dev
+        self.sequences_dev = sequence_dev[:500]
         print "defined all of the data in " + str(passed_time(start_time))
         self.vocab_size = len(self.vocab)
         self.model = dn.Model()
-        self.lstm_f_1 = dn.LSTMBuilder(LSTM_NUM_OF_LAYERS, INPUT_DIM, HIDDEN_DIM, self.model)
-        self.lstm_f_2 = dn.LSTMBuilder(LSTM_NUM_OF_LAYERS, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
-        self.lstm_b_1 = dn.LSTMBuilder(LSTM_NUM_OF_LAYERS, INPUT_DIM, HIDDEN_DIM, self.model)
-        self.lstm_b_2 = dn.LSTMBuilder(LSTM_NUM_OF_LAYERS, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
-        self.output_w = self.model.add_parameters((INPUT_DIM, 2*HIDDEN_DIM))
-        self.output_b = self.model.add_parameters((INPUT_DIM))
+        self.lstm_f_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
+        self.lstm_f_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
+        self.lstm_b_1 = dn.LSTMBuilder(1, INPUT_DIM, HIDDEN_DIM, self.model)
+        self.lstm_b_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
+        self.output_w = self.model.add_parameters((self.out_size, 2*HIDDEN_DIM))
+        self.output_b = self.model.add_parameters((self.out_size))
 
         if self.type == "a":
             self.tagger = mt.WordEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size)
@@ -90,7 +90,7 @@ class TaggerBiLSTM:
             self.tagger = mt.PreTrained(self.model, EMBEDDINGS_SIZE, self.vocab_size, "wordVectors.txt")
         elif self.type == "d":
             self.tagger = mt.WordCharEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size, len(self.chars), HIDDEN_DIM)
-        self.trainer = dn.AdamTrainer(self.model)
+        self.trainer = dn.AdamTrainer(self.model, 0.01)
         self.define_data()
         self.define_dev_data()
 
@@ -133,33 +133,41 @@ class TaggerBiLSTM:
         good = 0.0
         bad = 0.0
         for X, Y in zip(self.x_dev, self.y_dev):
-            probs = self.get_probs(X)
-            probs_values = [prob.npvalue() for prob in probs]
-            for i, prob_value in enumerate(probs_values):
-                size_pred = len(prob_value[0])
-                preds = [ np.argmax(prob_value[:, j]) for j in range(size_pred) ]
-                temp_good = len([1 for j in range(size_pred) if preds[j] == Y[j]])
-                # TODO remove the O for NER
-                tags = [self.tags_to_ix[preds[j]] for j in range(size_pred)]
-                good += temp_good
-                bad += (size_pred - temp_good)
+            probs = self.get_probs(X)[0].npvalue()
+            for i in range(len(probs[0])):
+                pred = np.argmax(probs[:, i])
+                label = Y[i]
+                if pred == label:
+                    good += 1
+                else:
+                    bad += 1
+
+            # probs_values = [prob.npvalue() for prob in probs]
+            # for i, prob_value in enumerate(probs_values):
+            #     size_pred = len(prob_value[0])
+            #     preds = [ np.argmax(prob_value[:, j]) for j in range(size_pred) ]
+            #     temp_good = len([1 for j in range(size_pred) if preds[j] == Y[j]])
+            #     # TODO remove the O for NER
+            #     tags = [self.tags_to_ix[preds[j]] for j in range(size_pred)]
+            #     good += temp_good
+            #     bad += (size_pred - temp_good)
 
         return good / (good + bad)
 
     def get_probs(self, X):
-        dn.renew_cg()
+        dn.renew_cg(True, True)
         embedded = self.tagger([X])
         state_back_1 = self.lstm_b_1.initial_state()
         state_forw_1 = self.lstm_f_1.initial_state()
         fw_exps = state_forw_1.transduce(embedded)
         bw_exps = state_back_1.transduce(reversed(embedded))
-        # bw_exps.reverse()
+        bw_exps.reverse()
         b_1 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, bw_exps)]
         state_back_2 = self.lstm_b_2.initial_state()
         state_forw_2 = self.lstm_f_2.initial_state()
         out_f = state_forw_2.transduce(b_1)
         out_b = state_back_2.transduce(reversed(b_1))
-        # out_b.reverse()
+        out_b.reverse()
         size_vector = len(embedded)
         w = dn.parameter(self.output_w)
         b = dn.parameter(self.output_b)
@@ -168,47 +176,50 @@ class TaggerBiLSTM:
         return probs
 
     def train(self):
-        start_time = time.time()
-        sum_of_losses = 0.0
-        total_losses = 0.0
-        checked = 0.0
-        total_checked = 0.0
-        accuracy_all = []
-        j = 1
-        to_print_loss = []
-        to_print_time = []
-        to_print_time_valid = []
-        print "========================================================="
-        print "N*batch|| Loss      || Time train || Time dev || accuracy"
-        for  i, (X, Y) in enumerate(zip(self.x, self.y)):
-            probs = self.get_probs(X)
-            losses = [ dn.sum_batches(dn.pickneglogsoftmax_batch(prob, Y)) for prob in probs ]
-            loss = dn.esum(losses)
-            loss_value = loss.scalar_value()
-            sum_of_losses += loss_value
-            total_losses += loss_value
-            loss.backward()
-            # loss.forward()
-            checked += len(Y)
-            total_checked += len(Y)
-            self.trainer.update()
-            if (i+1)%(500) == 0:
-                to_print_loss.append(sum_of_losses/checked)
-                to_print_time.append(passed_time(start_time))
-                # print "batch of sequences number " + str(j) + " with loss " + str(sum_of_losses/checked)
-                checked = 0.0
-                sum_of_losses = 0.0
-                j += 1
-                # print "evaluate 500 sequence in " + str(passed_time(start_time))
-                start_time = time.time()
-                accuracy_dev = self.validate()
-                accuracy_all.append(accuracy_dev)
-                to_print_time_valid.append(passed_time(start_time))
-                # print "accuracy on dev: " + str(accuracy_dev) + " in time " + str(passed_time(start_time))
-                start_time = time.time()
-                m = len(to_print_loss)-1
-                print str(m) + "\t|| " + str(to_print_loss[m]) + " || " + str(to_print_time[m]) + " || " + str(to_print_time_valid[m]) + " || " + str(accuracy_all[m])
-        print "epoch loss: " + str(total_losses/total_checked) + " last accuracy " + str(accuracy_all[len(accuracy_all)-1])
+        for epoch in range(EPOCHS):
+            start_epoch = time.time()
+            print "===================== EPOCH " + str(epoch+1) + " ====================="
+            start_time = time.time()
+            sum_of_losses = 0.0
+            total_losses = 0.0
+            checked = 0.0
+            total_checked = 0.0
+            accuracy_all = []
+            j = 0
+            to_print_loss = []
+            to_print_time = []
+            to_print_time_valid = []
+            print "========================================================="
+            print "N*batch|| Loss      || Time train || Time dev || accuracy"
+            for  i, (X, Y) in enumerate(zip(self.x, self.y)):
+                probs = self.get_probs(X)[0]
+                loss = dn.sum_batches(dn.pickneglogsoftmax_batch(probs, Y))
+                loss_value = loss.value()
+                sum_of_losses += loss_value
+                total_losses += loss_value
+                loss.backward()
+                # loss.forward()
+                checked += len(Y)
+                total_checked += len(Y)
+                self.trainer.update()
+                if (i+1)%(500) == 0:
+                    to_print_loss.append(sum_of_losses/checked)
+                    to_print_time.append(passed_time(start_time))
+                    # print "batch of sequences number " + str(j) + " with loss " + str(sum_of_losses/checked)
+                    checked = 0.0
+                    sum_of_losses = 0.0
+                    # print "evaluate 500 sequence in " + str(passed_time(start_time))
+                    start_time = time.time()
+                    accuracy_dev = self.validate()
+                    accuracy_all.append(accuracy_dev)
+                    to_print_time_valid.append(passed_time(start_time))
+                    # print "accuracy on dev: " + str(accuracy_dev) + " in time " + str(passed_time(start_time))
+                    start_time = time.time()
+                    print str(j) + "\t|| " + str(to_print_loss[j]) + " || " + str(to_print_time[j]) + " || " + str(to_print_time_valid[j]) + " || " + str(accuracy_all[j])
+                    j += 1
+            print "epoch loss: " + str(total_losses/total_checked) + " last accuracy " + str(accuracy_all[len(accuracy_all)-1])
+            print "epoch number " + str(epoch+1) + " done in " + str(passed_time(start_epoch))
+            start_epoch = time.time()
         return accuracy_all
 
     def learn(self):
@@ -227,6 +238,6 @@ if __name__ == '__main__':
     folder_name = sys.argv[2]
     model_file = sys.argv[3]
     tagger_train = TaggerBiLSTM(folder_name, type_word)
-    accuracy_type = tagger_train.learn()
+    accuracy_type = tagger_train.train()
     accuracy_all = [accuracy_type, [0], [0], [0]]
     save_iter_in_graph(folder_name, accuracy_all)
