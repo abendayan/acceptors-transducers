@@ -13,7 +13,7 @@ class WordEmbedding(object):
         self.spec = (embedding_size, vocab_size)
 
     def __call__(self, input_exp):
-        embedded = [dn.lookup_batch(self.input_lookup, chars) for chars in input_exp]
+        embedded = dn.lookup_batch(self.input_lookup, [input_exp])
         return embedded
 
     def param_collection(self): return self.pc
@@ -27,26 +27,17 @@ class WordEmbedding(object):
 class CharEmbedding(object):
     def __init__(self, model, embedding_size, char_size):
         pc =  model.add_subcollection()
-        self.e_c = pc.add_lookup_parameters((char_size, 50))
+        self.e_c = pc.add_lookup_parameters((char_size, embedding_size))
         self.lstm_c = dn.LSTMBuilder(1, embedding_size, embedding_size, pc)
         self.pc = pc
         self.spec = (embedding_size, char_size)
-        print self.spec
 
     def __call__(self, X):
-        input_chars = [dn.lookup_batch(self.e_c, chars) for chars in X[0]]
         state_char = self.lstm_c.initial_state()
-        print input_chars
-        # embedded = None
-        embedded = state_char.transduce(input_chars)
-        # for char_emb in input_chars:
-            # embedded = state_char.transduce(char_emb)[-1]
-        # all_out = []
-        # for input_char in input_chars:
-        #     all_out.append(state_char.transduce(input_char))
-        # # take the last input of the lstm
-        # print all_out[len(all_out)-1]
-        return embedded
+        vector = [dn.lookup_batch(self.e_c, [c]) for c in X]
+        embedded = state_char.transduce(vector)
+        # take the last output of the lstm
+        return embedded[-1]
 
     def param_collection(self): return self.pc
 

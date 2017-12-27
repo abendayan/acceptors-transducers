@@ -22,15 +22,18 @@ def passed_time(previous_time):
 def parse_file(name_file):
     words = open(name_file, "r").read().split("\n")
     sequences = []
-    sequence = [(START, START)]
+    sequence = []
+    # sequence = [(START, START)]
     vocab = { UNK: 0, START: 1, END: 2 }
     tags = { START: 0 }
-    chars = { UNK: 0, START: 1, END: 2 }
+    chars = { UNK: 0 }
+    # chars = { UNK: 0, START: 1, END: 2 }
     for word_tag in words:
         if word_tag == "":
-            sequence.append((END, END))
+            # sequence.append((END, END))
             sequences.append(sequence)
-            sequence = [(START, START)]
+            sequence = []
+            # sequence = [(START, START)]
         else:
             word, tag = word_tag.split(" ")
             if tag not in tags:
@@ -123,30 +126,21 @@ class TaggerBiLSTM:
         good = 0.0
         bad = 0.0
         for X, Y in zip(self.x_dev, self.y_dev):
-            probs = dn.softmax(self.get_probs(X)[0]).npvalue()
-            for i in range(len(probs[0])):
-                pred = np.argmax(probs[:, i])
-                label = Y[i]
+            probs = self.get_probs(X)
+            for prob, y in zip(probs, Y):
+                softmax = dn.softmax(prob).npvalue()
+                pred = np.argmax(softmax)
+                label = y
                 if pred == label:
                     good += 1
                 else:
                     bad += 1
-
-            # probs_values = [prob.npvalue() for prob in probs]
-            # for i, prob_value in enumerate(probs_values):
-            #     size_pred = len(prob_value[0])
-            #     preds = [ np.argmax(prob_value[:, j]) for j in range(size_pred) ]
-            #     temp_good = len([1 for j in range(size_pred) if preds[j] == Y[j]])
-            #     # TODO remove the O for NER
-            #     tags = [self.tags_to_ix[preds[j]] for j in range(size_pred)]
-            #     good += temp_good
-            #     bad += (size_pred - temp_good)
-
         return good / (good + bad)
 
     def get_probs(self, X):
         dn.renew_cg(True, True)
-        embedded = self.tagger([X])
+        embedded = [ self.tagger(word) for word in X ]
+        # print embedded
         state_back_1 = self.lstm_b_1.initial_state()
         state_forw_1 = self.lstm_f_1.initial_state()
         fw_exps = state_forw_1.transduce(embedded)
@@ -183,8 +177,11 @@ class TaggerBiLSTM:
             print "========================================================="
             print "N*batch|| Loss      || Time train || Time dev || accuracy"
             for  i, (X, Y) in enumerate(zip(self.x, self.y)):
-                probs = self.get_probs(X)[0]
-                loss = dn.sum_batches(dn.pickneglogsoftmax_batch(probs, Y))
+                probs = self.get_probs(X)
+                losses = []
+                for prob, y in zip(probs, Y):
+                    losses.append(dn.pickneglogsoftmax(prob, y))
+                loss = dn.esum(losses)
                 loss_value = loss.value()
                 sum_of_losses += loss_value
                 total_losses += loss_value
