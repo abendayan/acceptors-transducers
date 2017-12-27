@@ -56,7 +56,7 @@ class PreTrained(object):
         self.spec = (embedding_size, vocab_size, word_vector_file)
 
     def __call__(self, input_exp):
-        embedded = [dn.lookup_batch(self.input_lookup, chars) for chars in input_exp]
+        embedded = dn.lookup_batch(self.input_lookup, [input_exp])
         return embedded
 
     def param_collection(self): return self.pc
@@ -71,7 +71,7 @@ class WordCharEmbedding(object):
         pc =  model.add_subcollection()
         self.spec = (embedding_size, vocab_size, char_size, hidden_dim)
         self.word_embedding = WordEmbedding(model, embedding_size, vocab_size)
-        self.char_embedding = CharEmbedding(model, embedding_size, char_size, hidden_dim)
+        self.char_embedding = CharEmbedding(model, embedding_size, char_size)
 
     def __call__(self, input_exp):
         # TODO finish this

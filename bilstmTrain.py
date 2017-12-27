@@ -62,7 +62,7 @@ class TaggerBiLSTM:
         print "number of sentences " + str(len(self.sequences))
         # sequence_dev = parse_file(dev_file)[0]
         # random.shuffle(sequence_dev)
-        dev_size = len(self.sequences)/10
+        dev_size = len(self.sequences)/100
         print dev_size
         self.sequences_dev = self.sequences[:dev_size]
         print "defined all of the data in " + str(passed_time(start_time))
@@ -112,6 +112,7 @@ class TaggerBiLSTM:
                     x.append([self.chars[char] for char in word ])
                 else:
                     x.append([self.chars[word]])
+        # TODO correct representation for d
         return x
 
     def prepare_y(self, sequence):
