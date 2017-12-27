@@ -24,8 +24,8 @@ def parse_file(name_file):
     sequences = []
     sequence = []
     # sequence = [(START, START)]
-    vocab = { UNK: 0, START: 1, END: 2 }
-    tags = { START: 0 }
+    vocab = { UNK: 0 }
+    tags = { }
     chars = { UNK: 0 }
     # chars = { UNK: 0, START: 1, END: 2 }
     for word_tag in words:
@@ -67,23 +67,24 @@ class TaggerBiLSTM:
         self.sequences_dev = self.sequences[:dev_size]
         print "defined all of the data in " + str(passed_time(start_time))
         self.vocab_size = len(self.vocab)
-        self.model = dn.Model()
-        self.lstm_f_1 = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
-        self.lstm_f_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
-        self.lstm_b_1 = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
-        self.lstm_b_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
-        self.output_w = self.model.add_parameters((self.out_size, 2*HIDDEN_DIM))
-        # self.output_b = self.model.add_parameters((self.out_size))
-
-        if self.type == "a":
-            self.tagger = mt.WordEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size)
-        elif self.type == "b":
-            self.tagger = mt.CharEmbedding(self.model, EMBEDDINGS_SIZE, len(self.chars))
-        elif self.type == "c":
-            self.tagger = mt.PreTrained(self.model, EMBEDDINGS_SIZE, self.vocab_size, "wordVectors.txt")
-        elif self.type == "d":
-            self.tagger = mt.WordCharEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size, len(self.chars), HIDDEN_DIM)
-        self.trainer = dn.AdamTrainer(self.model, 0.01)
+        model = dn.Model()
+        self.model = mt.TaggerModel(model, EMBEDDINGS_SIZE, HIDDEN_DIM, self.out_size, self.vocab_size, len(self.chars), self.type)
+        # self.lstm_f_1 = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
+        # self.lstm_f_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
+        # self.lstm_b_1 = dn.LSTMBuilder(1, EMBEDDINGS_SIZE, HIDDEN_DIM, self.model)
+        # self.lstm_b_2 = dn.LSTMBuilder(1, 2*HIDDEN_DIM, HIDDEN_DIM, self.model)
+        # self.output_w = self.model.add_parameters((self.out_size, 2*HIDDEN_DIM))
+        # # self.output_b = self.model.add_parameters((self.out_size))
+        #
+        # if self.type == "a":
+        #     self.tagger = mt.WordEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size)
+        # elif self.type == "b":
+        #     self.tagger = mt.CharEmbedding(self.model, EMBEDDINGS_SIZE, len(self.chars))
+        # elif self.type == "c":
+        #     self.tagger = mt.PreTrained(self.model, EMBEDDINGS_SIZE, self.vocab_size, "wordVectors.txt")
+        # elif self.type == "d":
+        #     self.tagger = mt.WordCharEmbedding(self.model, EMBEDDINGS_SIZE, self.vocab_size, len(self.chars), HIDDEN_DIM)
+        # self.trainer = dn.AdamTrainer(self.model)
         self.define_data()
         self.define_dev_data()
 
@@ -148,26 +149,27 @@ class TaggerBiLSTM:
 
     def get_probs(self, X):
         dn.renew_cg(True, True)
-        embedded = [ self.tagger(word) for word in X ]
-        # print embedded
-        state_back_1 = self.lstm_b_1.initial_state()
-        state_forw_1 = self.lstm_f_1.initial_state()
-        fw_exps = state_forw_1.transduce(embedded)
-        bw_exps = state_back_1.transduce(reversed(embedded))
-        bw_exps.reverse()
-        b_1 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, bw_exps)]
-        state_back_2 = self.lstm_b_2.initial_state()
-        state_forw_2 = self.lstm_f_2.initial_state()
-        out_f = state_forw_2.transduce(b_1)
-        out_b = state_back_2.transduce(reversed(b_1))
-        out_b.reverse()
-        size_vector = len(embedded)
-        w = dn.parameter(self.output_w)
-        # b = dn.parameter(self.output_b)
-        b_2 = [ dn.concatenate([out_f[i], out_b[i]]) for i in range(size_vector) ]
-        probs = [ w*b_2_i for b_2_i in b_2 ]
+        return self.model(X)
+        # embedded = [ self.tagger(word) for word in X ]
+        # # print embedded
+        # state_back_1 = self.lstm_b_1.initial_state()
+        # state_forw_1 = self.lstm_f_1.initial_state()
+        # fw_exps = state_forw_1.transduce(embedded)
+        # bw_exps = state_back_1.transduce(reversed(embedded))
+        # bw_exps.reverse()
+        # b_1 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, bw_exps)]
+        # state_back_2 = self.lstm_b_2.initial_state()
+        # state_forw_2 = self.lstm_f_2.initial_state()
+        # out_f = state_forw_2.transduce(b_1)
+        # out_b = state_back_2.transduce(reversed(b_1))
+        # out_b.reverse()
+        # size_vector = len(embedded)
+        # w = dn.parameter(self.output_w)
+        # # b = dn.parameter(self.output_b)
+        # b_2 = [ dn.concatenate([out_f[i], out_b[i]]) for i in range(size_vector) ]
+        # probs = [ w*b_2_i for b_2_i in b_2 ]
         # probs = [ w*b_2_i+b for b_2_i in b_2 ]
-        return probs
+        # return probs
 
     def train(self):
         for epoch in range(EPOCHS):
@@ -187,9 +189,9 @@ class TaggerBiLSTM:
             print "N*batch|| Loss      || Time train || Time dev || accuracy"
             for  i, (X, Y) in enumerate(zip(self.x, self.y)):
                 probs = self.get_probs(X)
-                losses = []
-                for prob, y in zip(probs, Y):
-                    losses.append(dn.pickneglogsoftmax(prob, y))
+                losses = [ dn.pickneglogsoftmax(prob, y) for prob, y in zip(probs, Y)]
+                if losses == []:
+                    continue
                 loss = dn.esum(losses)
                 loss_value = loss.value()
                 sum_of_losses += loss_value
@@ -198,7 +200,7 @@ class TaggerBiLSTM:
                 # loss.forward()
                 checked += len(Y)
                 total_checked += len(Y)
-                self.trainer.update()
+                self.model.trainer.update()
                 if (i+1)%(500) == 0:
                     to_print_loss.append(sum_of_losses/checked)
                     to_print_time.append(passed_time(start_time))
@@ -217,19 +219,8 @@ class TaggerBiLSTM:
             print "epoch loss: " + str(total_losses/total_checked) + " last accuracy " + str(accuracy_all[len(accuracy_all)-1])
             print "epoch number " + str(epoch+1) + " done in " + str(passed_time(start_epoch))
             start_epoch = time.time()
-        dn.save("model_type"+self.type,[self.tagger])
+        dn.save("model_type"+self.type,[self.model])
         return accuracy_all
-
-    def learn(self):
-        start_epoch = time.time()
-        accuracy_epoch = [0]*EPOCHS
-        for i in range(EPOCHS):
-            print "===================== EPOCH " + str(i+1) + " ====================="
-            accuracy_epoch[i] = self.train()
-            print "epoch number " + str(i+1) + " done in " + str(passed_time(start_epoch))
-            start_epoch = time.time()
-        dn.save("model_type"+self.type,[self.tagger])
-        return accuracy_epoch
 
 if __name__ == '__main__':
     type_word = sys.argv[1]

@@ -5,6 +5,56 @@ import sys
 import matplotlib.pyplot as plt
 import random
 
+# http://dynet.readthedocs.io/en/latest/python_saving_tutorial.html
+
+class TaggerModel(object):
+    def __init__(self, model, embedding_size, hidden_dim, out_size, vocab_size, char_size, type):
+        pc =  model.add_subcollection()
+        self.lstm_f_1 = dn.LSTMBuilder(1, embedding_size, hidden_dim, pc)
+        self.lstm_f_2 = dn.LSTMBuilder(1, 2*hidden_dim, hidden_dim, pc)
+        self.lstm_b_1 = dn.LSTMBuilder(1, embedding_size, hidden_dim, pc)
+        self.lstm_b_2 = dn.LSTMBuilder(1, 2*hidden_dim, hidden_dim, pc)
+        self.output_w = model.add_parameters((out_size, 2*hidden_dim))
+        if type == "a":
+            self.tagger = WordEmbedding(pc, embedding_size, vocab_size)
+        elif type == "b":
+            self.tagger = CharEmbedding(pc, embedding_size, char_size)
+        elif type == "c":
+            self.tagger = PreTrained(pc, embedding_size, vocab_size, "wordVectors.txt")
+        elif type == "d":
+            self.tagger = WordCharEmbedding(pc, embedding_size, vocab_size, char_size, hidden_dim)
+        self.trainer = dn.AdamTrainer(pc)
+        self.pc = pc
+        self.spec = (embedding_size, hidden_dim, out_size, vocab_size, char_size, type)
+
+    def __call__(self, X):
+        embedded = [ self.tagger(word) for word in X ]
+        state_back_1 = self.lstm_b_1.initial_state()
+        state_forw_1 = self.lstm_f_1.initial_state()
+        fw_exps = state_forw_1.transduce(embedded)
+        bw_exps = state_back_1.transduce(reversed(embedded))
+        bw_exps.reverse()
+        b_1 = [dn.concatenate([f,b]) for f,b in zip(fw_exps, bw_exps)]
+        state_back_2 = self.lstm_b_2.initial_state()
+        state_forw_2 = self.lstm_f_2.initial_state()
+        out_f = state_forw_2.transduce(b_1)
+        out_b = state_back_2.transduce(reversed(b_1))
+        out_b.reverse()
+        size_vector = len(embedded)
+        w = dn.parameter(self.output_w)
+        b_2 = [ dn.concatenate([out_f[i], out_b[i]]) for i in range(size_vector) ]
+        probs = [ w*b_2_i for b_2_i in b_2 ]
+        return probs
+
+    def param_collection(self): return self.pc
+
+    @staticmethod
+    def from_spec(spec, model):
+        embedding_size, hidden_dim, out_size, vocab_size, char_size, type = spec
+        return TaggerModel(model, embedding_size, hidden_dim, out_size, vocab_size, char_size, type)
+
+
+
 class WordEmbedding(object):
     def __init__(self, model, embedding_size, vocab_size):
         pc =  model.add_subcollection()
