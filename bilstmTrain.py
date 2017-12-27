@@ -103,7 +103,7 @@ class TaggerBiLSTM:
     def prepare_x(self, sequence):
         if self.type == "a" or self.type == "c":
             x = [ self.vocab[self.word_or_unk(word)] for (word, tag) in sequence ]
-        elif self.type == "b" or self.type == "d":
+        elif self.type == "b":
             # when d, needs to have the words and the char
             x = []
             for (word, _) in sequence:
@@ -112,7 +112,15 @@ class TaggerBiLSTM:
                     x.append([self.chars[char] for char in word ])
                 else:
                     x.append([self.chars[word]])
-        # TODO correct representation for d
+        elif self.type == "d":
+            x = []
+            for (word, _) in sequence:
+                word = self.word_or_unk(word)
+                if word not in [UNK, START, END]:
+                    char = [self.chars[char] for char in word ]
+                else:
+                    char = [self.chars[word]]
+                x.append((self.vocab[word], char))
         return x
 
     def prepare_y(self, sequence):
@@ -209,6 +217,7 @@ class TaggerBiLSTM:
             print "epoch loss: " + str(total_losses/total_checked) + " last accuracy " + str(accuracy_all[len(accuracy_all)-1])
             print "epoch number " + str(epoch+1) + " done in " + str(passed_time(start_epoch))
             start_epoch = time.time()
+        dn.save("model_type"+self.type,[self.tagger])
         return accuracy_all
 
     def learn(self):

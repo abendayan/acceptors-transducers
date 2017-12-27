@@ -72,12 +72,18 @@ class WordCharEmbedding(object):
         self.spec = (embedding_size, vocab_size, char_size, hidden_dim)
         self.word_embedding = WordEmbedding(model, embedding_size, vocab_size)
         self.char_embedding = CharEmbedding(model, embedding_size, char_size)
+        self.pc = pc
+        # self.input_lookup = self.pc.add_parameters((embedding_size, embedding_size * 2))
+        self.output_w = self.pc.add_parameters((embedding_size, 2*embedding_size))
 
     def __call__(self, input_exp):
-        # TODO finish this
-        embedded_char = self.char_embedding(input_exp)
-        embedded_word = self.word_embedding(input_exp)
-        embedded = [dn.concatenate([w,c]) for w,c in zip(embedded_word, embedded_char)]
+        word_repr = input_exp[0]
+        char_repr = input_exp[1]
+        embedded_char = self.char_embedding(char_repr)
+        embedded_word = self.word_embedding(word_repr)
+        out = dn.concatenate([embedded_word, embedded_char])
+        w = dn.parameter(self.output_w)
+        embedded = w*out
         return embedded
 
     def param_collection(self): return self.pc
