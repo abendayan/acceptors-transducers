@@ -37,7 +37,7 @@ class PredictBiLSTM:
         self.sequences = read_file(input_file)
         model = dn.Model()
         self.model = dn.load("model_type"+self.type, model)[0]
-        self.vocab, self.tags = pickle.load(open(model_file+".vocab", "rb"))
+        self.vocab, self.tags, self.chars = pickle.load(open(model_file+self.type+".vocab", "rb"))
         self.tags_to_ix = { id:tag for tag, id in self.tags.iteritems() }
         self.define_data()
 
@@ -58,7 +58,11 @@ class PredictBiLSTM:
             for word in sequence:
                 word = self.word_or_unk(word)
                 if word != UNK:
-                    x.append([self.chars[char] for char in word ])
+                    for c in word:
+                        if c in self.chars:
+                            c.append(self.chars[c])
+                        else:
+                            c.append(UNK)
                 else:
                     x.append([self.chars[word]])
         elif self.type == "d":
@@ -66,7 +70,12 @@ class PredictBiLSTM:
             for word in sequence:
                 word = self.word_or_unk(word)
                 if word != UNK:
-                    char = [self.chars[char] for char in word ]
+                    char = []
+                    for c in word:
+                        if c in self.chars:
+                            c.append(self.chars[c])
+                        else:
+                            c.append(UNK)
                 else:
                     char = [self.chars[word]]
                 x.append((self.vocab[word], char))
@@ -78,17 +87,20 @@ class PredictBiLSTM:
 
     def learn(self):
         pred_file = ""
+        start_time = time.time()
+        print len(self.sequences)
         for j, X in enumerate(self.x):
             start_time = time.time()
             probs = self.get_probs(X)
             for i, prob in enumerate(probs):
                 softmax = dn.softmax(prob).npvalue()
                 pred = np.argmax(softmax)
-                pred_file += self.sequences[j][i] + " " + self.tags_to_ix[pred]
+                pred_file += self.sequences[j][i] + " " + self.tags_to_ix[pred] + "\n"
+            pred_file += "\n"
         out_file = open("test4."+self.input_file.split("/")[0], "w")
         out_file.write(pred_file)
         out_file.close()
-            # print sentence
+        print "predicted in " + str(passed_time(start_time))
 
 if __name__ == '__main__':
     type_word = sys.argv[1]

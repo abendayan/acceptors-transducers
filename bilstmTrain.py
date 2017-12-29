@@ -5,7 +5,6 @@ import sys
 import matplotlib.pyplot as plt
 import random
 import model_tagger as mt
-import csv
 import pickle
 # https://www.blog.pythonlibrary.org/2014/02/26/python-101-reading-and-writing-csv-files/
 
@@ -25,7 +24,7 @@ def csv_writer(data, path):
     Write data to a CSV file path
     """
     with open(path, "wb") as csv_file:
-        writer = csv.writer(csv_file, delimiter=',')
+        writer = csv.writer(csv_file, delimiter=';')
         for line in data:
             writer.writerow(line)
 
@@ -41,11 +40,14 @@ def parse_file(name_file):
             sequences.append(sequence)
             sequence = []
         else:
-            word, tag = word_tag.split(" ")
+            word, tag = word_tag.split()
             if tag not in tags:
                 tags[tag] = len(tags)
             if word not in vocab:
-                vocab[word] = len(vocab)
+                if len(vocab) > 0.9*len(words):
+                    word = UNK
+                else:
+                    vocab[word] = len(vocab)
             for char in word:
                 if char not in chars:
                     chars[char] = len(chars)
@@ -53,22 +55,28 @@ def parse_file(name_file):
     return sequences, vocab, tags, chars
 
 class TaggerBiLSTM:
-    def __init__(self, name_file, type, model_name):
+    def __init__(self, name_file, type, model_name, dev_file):
         self.type = type
         self.sequences, self.vocab, self.tags, self.chars = parse_file(name_file)
         self.tags_to_ix = { id:tag for tag, id in self.tags.iteritems() }
         self.out_size = len(self.tags)
+        print len(self.vocab)
         if self.type == "c":
-            vocab_txt = np.array(open("vocab.txt", 'r').read().split('\n'))
-            for vocab in vocab_txt:
-                if vocab not in self.vocab:
-                    self.vocab[vocab] = len(self.vocab)
+            suffixes = {}
+            preffix = {}
+            i = len(self.vocab)
+            suffixes = [ "@" + word[:3] for word in self.vocab ]
+            preffix = [ word[-3:] + "@" for word in self.vocab ]
+            for word in suffixes:
+                if word not in self.vocab:
+                    self.vocab[word] = len(self.vocab)
+            for word in preffix:
+                if word not in self.vocab:
+                    self.vocab[word] = len(self.vocab)
         print "number of sentences " + str(len(self.sequences))
-        # TODO needs to run with 10% and not 1%
-        dev_size = len(self.sequences)/100
-        pickle.dump([self.vocab, self.tags], open(model_name+".vocab", "wb"))
-        print dev_size
-        self.sequences_dev = self.sequences[:dev_size]
+        pickle.dump([self.vocab, self.tags, self.chars], open(model_name+self.type+".vocab", "wb"))
+        self.sequences_dev = parse_file(dev_file)[0]
+        print len(self.sequences_dev)
         print "defined all of the data in " + str(passed_time(start_time))
         self.vocab_size = len(self.vocab)
         model = dn.Model()
@@ -78,6 +86,11 @@ class TaggerBiLSTM:
 
     def word_or_unk(self, word):
         if word not in self.vocab:
+            if self.type == "c":
+                if "@" + word[:3] in self.vocab:
+                    return "@" + word[:3]
+                if word[-3:] + "@" in self.vocab:
+                    return word[-3:] + "@"
             return UNK
         return word
 
@@ -129,6 +142,8 @@ class TaggerBiLSTM:
                 softmax = dn.softmax(prob).npvalue()
                 pred = np.argmax(softmax)
                 label = y
+                if self.tags_to_ix[pred] == 'O' and self.tags_to_ix[label] == 'O':
+                    continue
                 if pred == label:
                     good += 1
                 else:
@@ -179,20 +194,20 @@ class TaggerBiLSTM:
                     accuracy_all.append(accuracy_dev)
                     to_print_time_valid.append(passed_time(start_time))
                     start_time = time.time()
-                    to_write += str(j)+","+str(to_print_loss[j])+","+str(to_print_time[j])+","+str(to_print_time_valid[j])+","+str(accuracy_all[j])+"\n"
+                    to_write += str(j)+";"+str(to_print_loss[j])+";"+str(to_print_time[j])+";"+str(to_print_time_valid[j])+";"+str(accuracy_all[j])+"\n"
                     print str(j) + "\t|| " + str(to_print_loss[j]) + " || " + str(to_print_time[j]) + " || " + str(to_print_time_valid[j]) + " || " + str(accuracy_all[j])
                     j += 1
             print "epoch loss: " + str(total_losses/total_checked) + " last accuracy " + str(accuracy_all[len(accuracy_all)-1])
             print "epoch number " + str(epoch+1) + " done in " + str(passed_time(start_epoch))
             start_epoch = time.time()
         dn.save("model_type"+self.type,[self.model])
-        csv_writer(to_write.split("\n"), "output"+self.type+".csv")
-        return accuracy_all
+        write_file = open("output"+self.type+".txt", "r")
+        write_file.write(to_write.split("\n"))
 
 if __name__ == '__main__':
     type_word = sys.argv[1]
     folder_name = sys.argv[2]
     model_file = sys.argv[3]
-    tagger_train = TaggerBiLSTM(folder_name, type_word, model_file)
-    accuracy_type = tagger_train.train()
-    accuracy_all = [accuracy_type, [0], [0], [0]]
+    dev_file = sys.argv[4]
+    tagger_train = TaggerBiLSTM(folder_name, type_word, model_file, dev_file)
+    tagger_train.train()
