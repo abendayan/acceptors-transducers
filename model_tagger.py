@@ -23,12 +23,12 @@ class TaggerModel(object):
             self.tagger = WordEmbedding(pc, embedding_size, vocab_size)
         elif type == "d":
             self.tagger = WordCharEmbedding(pc, embedding_size, vocab_size, char_size, hidden_dim)
-        self.trainer = dn.AdamTrainer(pc, 0.001)
+        self.trainer = dn.AdamTrainer(pc, 0.005)
         self.pc = pc
         self.spec = (embedding_size, hidden_dim, out_size, vocab_size, char_size, type)
 
     def __call__(self, X):
-        
+
         embedded = [ self.tagger(word) for word in X ]
         state_back_1 = self.lstm_b_1.initial_state()
         state_forw_1 = self.lstm_f_1.initial_state()

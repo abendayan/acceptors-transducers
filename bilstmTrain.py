@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import random
 import model_tagger as mt
 import pickle
-# https://www.blog.pythonlibrary.org/2014/02/26/python-101-reading-and-writing-csv-files/
 
 LSTM_NUM_OF_LAYERS = 2
 INPUT_DIM = 50
@@ -94,6 +93,11 @@ class TaggerBiLSTM:
             return UNK
         return word
 
+    def char_or_unk(self, char):
+        if char not in self.chars:
+            return UNK
+        return char
+
     def define_data(self):
         self.x = [self.prepare_x(sentence) for sentence in self.sequences]
         self.y = [self.prepare_y(sentence) for sentence in self.sequences]
@@ -106,23 +110,11 @@ class TaggerBiLSTM:
         if self.type == "a" or self.type == "c":
             x = [ self.vocab[self.word_or_unk(word)] for (word, tag) in sequence ]
         elif self.type == "b":
-            # when d, needs to have the words and the char
-            x = []
-            for (word, _) in sequence:
-                word = self.word_or_unk(word)
-                if word != UNK:
-                    x.append([self.chars[char] for char in word ])
-                else:
-                    x.append([self.chars[word]])
+            x = [ [self.chars[self.char_or_unk(char)] for char in word] for (word, _) in sequence ]
         elif self.type == "d":
             x = []
             for (word, _) in sequence:
-                word = self.word_or_unk(word)
-                if word != UNK:
-                    char = [self.chars[char] for char in word ]
-                else:
-                    char = [self.chars[word]]
-                x.append((self.vocab[word], char))
+                x.append((self.vocab[self.word_or_unk(word)], [self.chars[self.char_or_unk(char)] for char in word]))
         return x
 
     def prepare_y(self, sequence):
@@ -201,8 +193,9 @@ class TaggerBiLSTM:
             print "epoch number " + str(epoch+1) + " done in " + str(passed_time(start_epoch))
             start_epoch = time.time()
         dn.save("model_type"+self.type,[self.model])
-        write_file = open("output"+self.type+".txt", "r")
-        write_file.write(to_write.split("\n"))
+        write_file = open("output"+self.type+".txt", "w")
+        write_file.write(to_write)
+        write_file.close()
 
 if __name__ == '__main__':
     type_word = sys.argv[1]
